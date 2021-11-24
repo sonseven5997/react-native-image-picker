@@ -11,6 +11,7 @@ import android.content.pm.PackageManager;
 import android.database.Cursor;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
+import android.graphics.Matrix;
 import android.hardware.camera2.CameraCharacteristics;
 import android.media.MediaMetadataRetriever;
 import android.net.Uri;
@@ -19,7 +20,6 @@ import android.os.ParcelFileDescriptor;
 import android.provider.MediaStore;
 import android.provider.OpenableColumns;
 import android.util.Base64;
-import android.util.Log;
 import android.webkit.MimeTypeMap;
 
 import androidx.core.app.ActivityCompat;
@@ -37,13 +37,10 @@ import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
-import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
-import java.util.Date;
 import java.util.List;
-import java.util.TimeZone;
 import java.util.UUID;
 
 import static com.imagepicker.ImagePickerModule.*;
@@ -207,16 +204,17 @@ public class Utils {
             Bitmap b = BitmapFactory.decodeStream(imageStream);
             b = Bitmap.createScaledBitmap(b, newDimens[0], newDimens[1], true);
             String originalOrientation = getOrientation(uri, context);
+            int orientation = originalOrientation != null ? Integer.parseInt(originalOrientation) :  ExifInterface.ORIENTATION_NORMAL;
+            b = getRotatedImage(b, orientation);
 
             File file = createFile(context, getFileTypeFromMime(mimeType));
             OutputStream os = context.getContentResolver().openOutputStream(Uri.fromFile(file));
             b.compress(getBitmapCompressFormat(mimeType), options.quality, os);
-            setOrientation(file, originalOrientation, context);
             return Uri.fromFile(file);
 
         } catch (Exception e) {
             e.printStackTrace();
-            return uri; // cannot resize the image, return the original uri
+            return  null;
         }
     }
 
@@ -225,14 +223,27 @@ public class Utils {
         return exifInterface.getAttribute(ExifInterface.TAG_ORIENTATION);
     }
 
-    // ExifInterface.saveAttributes is costly operation so don't set exif for unnecessary orientations
-    static void setOrientation(File file, String orientation, Context context) throws IOException {
-        if (orientation.equals(String.valueOf(ExifInterface.ORIENTATION_NORMAL)) || orientation.equals(String.valueOf(ExifInterface.ORIENTATION_UNDEFINED))) {
-            return;
+    static Bitmap getRotatedImage(Bitmap bitmap, int orientation) throws IOException {
+        if (orientation == ExifInterface.ORIENTATION_NORMAL) {
+            return bitmap;
         }
-        ExifInterface exifInterface = new ExifInterface(file);
-        exifInterface.setAttribute(ExifInterface.TAG_ORIENTATION, orientation);
-        exifInterface.saveAttributes();
+
+        int rotationAngle;
+        switch (orientation) {
+            case ExifInterface.ORIENTATION_ROTATE_90: rotationAngle = 90; break;
+            case ExifInterface.ORIENTATION_ROTATE_180: rotationAngle = 180; break;
+            case ExifInterface.ORIENTATION_ROTATE_270: rotationAngle = 270; break;
+            default: rotationAngle = 0;
+        }
+
+        if (rotationAngle == 0) return bitmap;
+
+        int width = bitmap.getWidth();
+        int height = bitmap.getHeight();
+
+        Matrix matrix = new Matrix();
+        matrix.setRotate(rotationAngle, (float) width / 2, (float) height / 2);
+        return Bitmap.createBitmap(bitmap, 0, 0, width, height, matrix, true);
     }
 
     static int[] getImageDimensBasedOnConstraints(int origWidth, int origHeight, Options options) {
@@ -301,7 +312,6 @@ public class Utils {
         switch (mimeType) {
             case "image/jpeg": return "jpg";
             case "image/png": return "png";
-            case "image/gif": return "gif";
         }
         return "jpg";
     }
@@ -350,24 +360,25 @@ public class Utils {
     }
 
     static boolean isImageType(Uri uri, Context context) {
-        final String imageMimeType = "image/";
+        String imageMimeType = "image/";
 
-        return getMimeType(uri, context).contains(imageMimeType);
+        if (uri.getScheme().equals("file")) {
+            return getMimeTypeFromFileUri(uri).contains(imageMimeType);
+        }
+
+        ContentResolver contentResolver = context.getContentResolver();
+        return contentResolver.getType(uri).contains(imageMimeType);
     }
 
     static boolean isVideoType(Uri uri, Context context) {
-        final String videoMimeType = "video/";
+        String videoMimeType = "video/";
 
-        return getMimeType(uri, context).contains(videoMimeType);
-    }
-
-    static String getMimeType(Uri uri, Context context) {
-      if (uri.getScheme().equals("file")) {
-        return getMimeTypeFromFileUri(uri);
-      }
-
-      ContentResolver contentResolver = context.getContentResolver();
-      return contentResolver.getType(uri);
+        if (uri.getScheme().equals("file")) {
+            return getMimeTypeFromFileUri(uri).contains(videoMimeType);
+        }
+        
+        ContentResolver contentResolver = context.getContentResolver();
+        return contentResolver.getType(uri).contains("video/");
     }
 
     static List<Uri> collectUrisFromData(Intent data) {
@@ -398,28 +409,10 @@ public class Utils {
         map.putString("type", getMimeTypeFromFileUri(uri));
         map.putInt("width", dimensions[0]);
         map.putInt("height", dimensions[1]);
-        map.putString("type", getMimeType(uri, context));
 
         if (options.includeBase64) {
             map.putString("base64", getBase64String(uri, context));
         }
-
-        if(options.includeExtra) {
-          try (InputStream inputStream = context.getContentResolver().openInputStream(uri)) {
-            ExifInterface exif = new ExifInterface(inputStream);
-            Date datetime = new SimpleDateFormat("yyyy:MM:dd HH:mm:ss").parse(exif.getAttribute(ExifInterface.TAG_DATETIME));
-            SimpleDateFormat formatter = new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSSZ");
-            formatter.setTimeZone(TimeZone.getTimeZone("UTC"));
-            String datetimeAsString =  formatter.format(datetime);
-
-            // Add more exif data here ...
-
-            map.putString("timestamp", datetimeAsString);
-          } catch (Exception e) {
-            Log.e("RNIP", "Could not load image exif data: " + e.getMessage());
-          }
-        }
-
         return map;
     }
 
@@ -430,7 +423,6 @@ public class Utils {
         map.putDouble("fileSize", getFileSize(uri, context));
         map.putInt("duration", getDuration(uri, context));
         map.putString("fileName", fileName);
-        map.putString("type", getMimeType(uri, context));
         return map;
     }
 
