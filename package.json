@@ -1,6 +1,6 @@
 {
-  "name": "react-native-image-picker",
-  "version": "4.3.1",
+  "name": "ht-react-native-image-picker",
+  "version": "4.3.2",
   "description": "A React Native module that allows you to use native UI to select media from the device library or directly from the camera",
   "react-native": "src/index.ts",
   "main": "src/index.ts",
@@ -13,6 +13,9 @@
     "/src",
     "/lib"
   ],
+  "publishConfig": {
+    "access": "public"
+  },
   "author": "Johan du Toit (Johan-dutoit)",
   "contributors": [
     {
@@ -26,6 +29,8 @@
     "start": "react-native start",
     "example": "yarn --cwd example",
     "prepare": "bob build",
+    "build": "yarn build:esm",
+    "build:esm": "tsc",
     "ci:publish": "yarn semantic-release"
   },
   "keywords": [
